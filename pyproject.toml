@@ -1,0 +1,43 @@
+[build-system]
+build-backend = "poetry.core.masonry.api"
+requires = ["poetry-core~=2.1"]
+
+[project]
+name = "cvbot_example"
+version = "1.0.0"
+authors = [
+    { name = "Alexander Auras", email = "33501357+AlexanderAuras@users.noreply.github.com" },
+]
+description = "An example on how to use the cvbot library."
+keywords = ["robots", "cvbot"]
+readme = "README.md"
+requires-python = "~=3.11, <3.14"
+dynamic = [ "classifiers" ]
+
+[tool.poetry.dependencies]
+cvbot = {git = "https://github.com/Computer-Vision-Group-Siegen/cvbot.git"}
+numpy = "^2.2.5"
+
+[tool.poetry.group.dev]
+optional = true
+
+[tool.poetry.group.dev.dependencies]
+pyright = "^1.1.397"
+black = "^25.1.0"
+debugpy = "^1.8.13"
+ruff = "^0.11.2"
+
+[tool.poetry]
+requires-poetry = "~=2.0"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Typing :: Typed",
+]
+
+[tool.black]
+include = "cvbot_example/.*\\.py"
+line-length = 200

@@ -1,0 +1,9 @@
+*        text=auto
+
+*.ipynb  text
+*.json   text
+*.lock   text=auto
+*.md     text
+*.py     text
+*.toml   text
+*.yml    text
