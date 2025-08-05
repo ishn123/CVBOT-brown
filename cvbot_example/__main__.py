@@ -99,7 +99,7 @@ async def run_camera_yolo(drive_controller, motor, txtClient, K, model_path=MODE
             bottles = df[df['name'].str.lower() == 'bottle']
 
             if not bottles.empty:
-                # Find the closest bottle (based on largest pixel height)
+                # Find the closest bottle (based on largest pixel height = smallest distance)
                 bottles['pixel_height'] = bottles['ymax'] - bottles['ymin']
                 bottles['estimated_distance'] = (K * REAL_BOTTLE_HEIGHT_CM) / bottles['pixel_height']
                 closest = bottles.sort_values(by='estimated_distance').iloc[0]
@@ -109,18 +109,25 @@ async def run_camera_yolo(drive_controller, motor, txtClient, K, model_path=MODE
                 x_center = (closest['xmin'] + closest['xmax']) / 2
                 frame_center = frame.shape[1] / 2
                 offset = x_center - frame_center
-                offset_norm = offset / frame_center  # -1 to 1
-                max_turn_speed = 300
-                turn_speed = int(offset_norm * max_turn_speed)
+                offset_norm = offset / frame_center  # -1 to 1 range
+
+                # Apply smooth turning logic
+                dead_zone = 0.05  # Ignore offset within ±5%
+                max_turn_speed = 150  # Limited turn speed
+
+                if abs(offset_norm) < dead_zone:
+                    turn_speed = 0
+                else:
+                    turn_speed = int((offset_norm ** 3) * max_turn_speed)
 
                 last_detection_time = time.time()
                 last_distance_cm = distance_cm
 
-                print(f"🥤 Closest bottle: Distance = {distance_cm:.2f} cm | X Offset = {offset:.2f}")
+                print(f"🥤 Closest bottle: Distance = {distance_cm:.2f} cm | X Offset = {offset:.2f} | Turn Speed = {turn_speed}")
 
                 if distance_cm - 5 > DISTANCE_THRESHOLD_CM:
-                    if abs(offset_norm) > 0.1:
-                        print(f"🔄 Turning with speed {turn_speed}")
+                    if turn_speed != 0:
+                        print(f"🔄 Smooth turning with speed {turn_speed}")
                         await drive_controller.drive(np.array([0.0, 0.0, turn_speed]))
                     else:
                         print("✅ Aligned. Moving forward...")
