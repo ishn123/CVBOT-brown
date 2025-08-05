@@ -1,10 +1,10 @@
 import asyncio
-import os
-import sys
-import torch
-import cv2
 import time
 import numpy as np
+import torch
+import cv2
+import os
+import sys
 
 from cvbot.communication.txtapiclient import TxtApiClient
 from cvbot.config.drive_robot_configuration import DriveRobotConfiguration
@@ -14,7 +14,25 @@ from cvbot.model.servomotor import Servomotor
 MODEL_PATH = 'yolov5s.pt'
 REAL_BOTTLE_HEIGHT_CM = 20.01
 DISTANCE_THRESHOLD_CM = 30  # Trigger hit when closer than this (in cm)
+MIN_DISTANCE_CM = 10  # Minimum distance before treating it as "too close"
 
+async def move_back_and_scan(drive_controller):
+    # Move back slightly, then scan by oscillating left-right
+    print("🔙 Moving back slightly to reset position.")
+    await drive_controller.drive(np.array([0.0, -50.0, 0.0]))  # Move back slightly
+    await asyncio.sleep(1)
+
+    print("🔄 Scanning left-right for bottle...")
+    for _ in range(3):  # Oscillate 3 times
+        # Move right
+        await drive_controller.drive(np.array([0.0, 0.0, 50.0]))  # Turn right
+        await asyncio.sleep(0.5)
+        # Move left
+        await drive_controller.drive(np.array([0.0, 0.0, -50.0]))  # Turn left
+        await asyncio.sleep(0.5)
+
+    print("🔁 Finished scanning.")
+    await drive_controller.stop()  # Stop after scanning
 
 async def calibrate_k(model, camera_id=0):
     cap = cv2.VideoCapture(camera_id)
@@ -69,12 +87,10 @@ async def calibrate_k(model, camera_id=0):
         print("❌ No valid samples collected")
         return None
 
-
 async def run_camera_yolo(drive_controller, motor, txtClient, K, model_path=MODEL_PATH, camera_id=0):
     model = torch.hub.load('ultralytics/yolov5', 'custom', path=model_path)
     model.conf = 0.1
 
-    print(f"📦 Loaded model with classes: {model.names}")
     cap = cv2.VideoCapture(camera_id)
     if not cap.isOpened():
         print("❌ Failed to open camera")
@@ -104,7 +120,6 @@ async def run_camera_yolo(drive_controller, motor, txtClient, K, model_path=MODE
                 pixel_height = row['ymax'] - row['ymin']
                 distance_cm = (K * REAL_BOTTLE_HEIGHT_CM) / pixel_height
 
-                # Track detection time & distance
                 last_detection_time = time.time()
                 last_distance_cm = distance_cm
 
@@ -129,11 +144,10 @@ async def run_camera_yolo(drive_controller, motor, txtClient, K, model_path=MODE
             else:
                 print("🔍 No bottle detected")
 
-                # Use last detection to decide
                 time_since_last = time.time() - last_detection_time
                 if last_distance_cm is not None and last_distance_cm <= DISTANCE_THRESHOLD_CM and time_since_last < timeout_seconds:
-                    print("⚠️ Recently saw bottle close. Holding position.")
-                    await drive_controller.stop()
+                    print("⚠️ Bottle removed or obscured. Searching...")
+                    await move_back_and_scan(drive_controller)  # Move back and scan left-right
                 else:
                     print("🛑 Detection lost. Stopping robot for safety.")
                     await drive_controller.stop()
@@ -143,7 +157,6 @@ async def run_camera_yolo(drive_controller, motor, txtClient, K, model_path=MODE
     finally:
         cap.release()
         print("📷 Camera released")
-
 
 async def main():
     host = os.getenv("TXT_API_HOST", "192.168.4.18")
