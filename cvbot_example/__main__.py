@@ -13,7 +13,7 @@ from cvbot.model.servomotor import Servomotor
 
 MODEL_PATH = 'yolov5s.pt'
 REAL_BOTTLE_HEIGHT_CM = 20.01
-DISTANCE_THRESHOLD_CM = 30  # Trigger hit when closer than this (in cm)
+DISTANCE_THRESHOLD_CM = 30
 
 
 async def calibrate_k(model, camera_id=0):
@@ -83,9 +83,8 @@ async def run_camera_yolo(drive_controller, motor, txtClient, K, model_path=MODE
     print("🎥 Starting detection loop. Press Ctrl+C to exit.")
     bottle_was_hit = False
 
-    # New state trackers for fallback logic
     last_detection_time = time.time()
-    timeout_seconds = 1.0  # How long to "trust" last detection
+    timeout_seconds = 1.0
     last_distance_cm = None
 
     try:
@@ -100,19 +99,32 @@ async def run_camera_yolo(drive_controller, motor, txtClient, K, model_path=MODE
             bottles = df[df['name'].str.lower() == 'bottle']
 
             if not bottles.empty:
-                row = bottles.iloc[0]
-                pixel_height = row['ymax'] - row['ymin']
-                distance_cm = (K * REAL_BOTTLE_HEIGHT_CM) / pixel_height
+                # Find the closest bottle (based on largest pixel height)
+                bottles['pixel_height'] = bottles['ymax'] - bottles['ymin']
+                bottles['estimated_distance'] = (K * REAL_BOTTLE_HEIGHT_CM) / bottles['pixel_height']
+                closest = bottles.sort_values(by='estimated_distance').iloc[0]
 
-                # Track detection time & distance
+                pixel_height = closest['pixel_height']
+                distance_cm = closest['estimated_distance']
+                x_center = (closest['xmin'] + closest['xmax']) / 2
+                frame_center = frame.shape[1] / 2
+                offset = x_center - frame_center
+                offset_norm = offset / frame_center  # -1 to 1
+                max_turn_speed = 300
+                turn_speed = int(offset_norm * max_turn_speed)
+
                 last_detection_time = time.time()
                 last_distance_cm = distance_cm
 
-                print(f"🥤 Bottle detected. Estimated distance: {distance_cm:.2f} cm")
+                print(f"🥤 Closest bottle: Distance = {distance_cm:.2f} cm | X Offset = {offset:.2f}")
 
                 if distance_cm - 5 > DISTANCE_THRESHOLD_CM:
-                    print("🚗 Too far. Moving robot forward...")
-                    await drive_controller.drive(np.array([0.0, 300.0, 0.0]))
+                    if abs(offset_norm) > 0.1:
+                        print(f"🔄 Turning with speed {turn_speed}")
+                        await drive_controller.drive(np.array([0.0, 0.0, turn_speed]))
+                    else:
+                        print("✅ Aligned. Moving forward...")
+                        await drive_controller.drive(np.array([0.0, 300.0, 0.0]))
                     bottle_was_hit = False
                 else:
                     print("🛑 Within range. Stopping robot.")
@@ -128,8 +140,6 @@ async def run_camera_yolo(drive_controller, motor, txtClient, K, model_path=MODE
                         print("🔁 Arm returned to rest")
             else:
                 print("🔍 No bottle detected")
-
-                # Use last detection to decide
                 time_since_last = time.time() - last_detection_time
                 if last_distance_cm is not None and last_distance_cm <= DISTANCE_THRESHOLD_CM and time_since_last < timeout_seconds:
                     print("⚠️ Recently saw bottle close. Holding position.")
@@ -163,18 +173,16 @@ async def main():
     motor.position = 100
     await client.update_servomotors(motor)
 
-    # Load model for calibration
     calibration_model = torch.hub.load('ultralytics/yolov5', 'custom', path=MODEL_PATH)
     calibration_model.conf = 0.3
 
-    # Run camera calibration first
     K = await calibrate_k(calibration_model)
     if not K:
         print("❌ Calibration failed. Exiting")
         return
 
-    # Run bottle detection and robot movement
     await run_camera_yolo(drive_controller, motor, client, K)
+
 
 if __name__ == "__main__":
     try:
